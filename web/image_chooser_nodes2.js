@@ -3,6 +3,75 @@ import { api } from "../../scripts/api.js";
 
 let active = null;
 
+function enableImageZoom(viewport, images, signal) {
+  let scale = 1;
+  let x = 0;
+  let y = 0;
+  let pan = null;
+  const badge = document.createElement("span");
+  badge.className = "easyuse-chooser-zoom-level";
+  badge.setAttribute("aria-hidden", "true");
+  viewport.append(badge);
+  viewport.title = "滚轮缩放；按住鼠标中键拖动；双击恢复适应";
+  function render() {
+    const { width, height } = viewport.getBoundingClientRect();
+    if (width && height) {
+      x = scale < 1 ? width * (1 - scale) / 2 : Math.max(width * (1 - scale), Math.min(0, x));
+      y = scale < 1 ? height * (1 - scale) / 2 : Math.max(height * (1 - scale), Math.min(0, y));
+    }
+    for (const image of images) image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    viewport.dataset.zoom = String(scale);
+    badge.textContent = `${Math.round(scale * 100)}%`;
+  }
+  viewport.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = viewport.getBoundingClientRect();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+    const delta = Math.max(-120, Math.min(120, event.deltaY * unit));
+    const next = Math.max(0.25, Math.min(8, scale * Math.exp(-delta * 0.002)));
+    const ratio = next / scale;
+    x = event.clientX - rect.left - (event.clientX - rect.left - x) * ratio;
+    y = event.clientY - rect.top - (event.clientY - rect.top - y) * ratio;
+    scale = next;
+    render();
+  }, { passive: false, signal });
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    pan = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    viewport.setPointerCapture(event.pointerId);
+    viewport.classList.add("is-panning");
+  }, { signal });
+  viewport.addEventListener("pointermove", (event) => {
+    if (pan?.id !== event.pointerId) return;
+    x += event.clientX - pan.x;
+    y += event.clientY - pan.y;
+    pan.x = event.clientX;
+    pan.y = event.clientY;
+    render();
+  }, { signal });
+  viewport.addEventListener("lostpointercapture", () => {
+    pan = null;
+    viewport.classList.remove("is-panning");
+  }, { signal });
+  viewport.addEventListener("auxclick", (event) => {
+    if (event.button === 1) event.preventDefault();
+  }, { signal });
+  viewport.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    scale = 1;
+    x = y = 0;
+    render();
+  }, { signal });
+  const resize = new ResizeObserver(render);
+  resize.observe(viewport);
+  signal.addEventListener("abort", () => resize.disconnect(), { once: true });
+  render();
+}
+
 function closeChooser() {
   if (!active) return;
   cancelAnimationFrame(active.frame);
@@ -36,7 +105,7 @@ function showChooser({ id, urls }) {
   const content = document.createElement("div");
   content.className = "easyuse-chooser-content";
   const hint = document.createElement("p");
-  hint.textContent = "点击图片选中，可多选。拖动标题移动窗口，或收起后查看画布上的对比节点。";
+  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键拖动查看细节，双击恢复适应。拖动标题移动窗口，或收起后查看画布。";
   const grid = document.createElement("div");
   grid.className = "easyuse-chooser-images";
   const status = document.createElement("p");
@@ -116,11 +185,15 @@ function showChooser({ id, urls }) {
     })}`);
     img.alt = `图片 ${index + 1}`;
     img.draggable = false;
+    const viewport = document.createElement("div");
+    viewport.className = "easyuse-chooser-image-viewport";
+    viewport.append(img);
+    enableImageZoom(viewport, [img], state.listeners.signal);
     const label = document.createElement("span");
     label.textContent = `图片 ${index + 1}`;
-    tile.append(img, label);
-    tile.onclick = () => {
-      if (state.busy) return;
+    tile.append(viewport, label);
+    tile.onclick = (event) => {
+      if (state.busy || event.button !== 0) return;
       if (selected.has(index)) selected.delete(index);
       else selected.add(index);
       tile.setAttribute("aria-pressed", String(selected.has(index)));
@@ -151,10 +224,14 @@ function showChooser({ id, urls }) {
     const imageA = document.createElement("img");
     imageA.className = "easyuse-chooser-compare-a";
     imageA.draggable = imageB.draggable = false;
+    const reveal = document.createElement("div");
+    reveal.className = "easyuse-chooser-compare-reveal";
+    reveal.append(imageA);
     const divider = document.createElement("span");
     divider.className = "easyuse-chooser-compare-divider";
     divider.setAttribute("aria-hidden", "true");
-    stage.append(imageB, imageA, divider);
+    stage.append(imageB, reveal, divider);
+    enableImageZoom(stage, [imageB, imageA], state.listeners.signal);
     for (const [side, image, initial] of [["A", imageA, 0], ["B", imageB, 1]]) {
       const label = document.createElement("label");
       label.append(`${side === "A" ? "左侧" : "右侧"} ${side}：`);
@@ -185,7 +262,7 @@ function showChooser({ id, urls }) {
     toolbar.append(enlarge);
     const sliderLabel = document.createElement("label");
     sliderLabel.className = "easyuse-chooser-compare-slider";
-    sliderLabel.append("左右拖动分界线对比；对比不会改变已选图片。 ");
+    sliderLabel.append("左键拖动分界线；滚轮同步缩放，中键拖动查看细节，双击恢复适应。对比不会改变已选图片。 ");
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
@@ -209,7 +286,7 @@ function showChooser({ id, urls }) {
       event.preventDefault();
     };
     stage.onpointermove = (event) => {
-      if (stage.hasPointerCapture(event.pointerId)) point(event);
+      if ((event.buttons & 1) && stage.hasPointerCapture(event.pointerId)) point(event);
     };
     stage.onkeydown = (event) => {
       const current = Number(slider.value);
@@ -316,7 +393,14 @@ app.registerExtension({
         border-radius: 6px; background: #383838; white-space: nowrap; }
       .easyuse-chooser-image { display: flex; flex-direction: column; align-items: center;
         gap: 8px; padding: 10px; border: 3px solid #555; border-radius: 8px; background: #303030; }
-      .easyuse-chooser-image img { width: 100%; height: 240px; object-fit: contain; }
+      .easyuse-chooser-image-viewport { position: relative; width: 100%; height: 240px;
+        overflow: hidden; background: #111; touch-action: none; }
+      .easyuse-chooser-image img { display: block; width: 100%; height: 100%; object-fit: contain;
+        transform-origin: 0 0; pointer-events: none; }
+      .easyuse-chooser-zoom-level { position: absolute; right: 6px; bottom: 6px;
+        padding: 2px 5px; border-radius: 4px; background: #000a; color: #fff;
+        font-size: 12px; pointer-events: none; }
+      .easyuse-chooser-image-viewport.is-panning, .easyuse-chooser-compare-stage.is-panning { cursor: grabbing; }
       .easyuse-chooser-image[aria-pressed="true"] { border-color: #52d38a; background: #234536; }
       .easyuse-chooser-actions { display: flex; justify-content: flex-end; gap: 12px; }
       .easyuse-chooser-actions button { padding: 10px 20px; border: 1px solid #666;
@@ -332,8 +416,9 @@ app.registerExtension({
         background: #111; overflow: hidden; cursor: ew-resize; touch-action: none; }
       .is-large .easyuse-chooser-compare-stage { height: min(65vh, 650px); }
       .easyuse-chooser-compare-stage img { position: absolute; inset: 0; width: 100%; height: 100%;
-        object-fit: contain; pointer-events: none; }
-      .easyuse-chooser-compare-a { clip-path: inset(0 calc(100% - var(--chooser-compare-position)) 0 0); }
+        object-fit: contain; pointer-events: none; transform-origin: 0 0; }
+      .easyuse-chooser-compare-reveal { position: absolute; inset: 0; pointer-events: none;
+        clip-path: inset(0 calc(100% - var(--chooser-compare-position)) 0 0); }
       .easyuse-chooser-compare-divider { position: absolute; top: 0; bottom: 0;
         left: var(--chooser-compare-position); width: 2px; background: #fff;
         box-shadow: 0 0 4px #000; pointer-events: none; }
