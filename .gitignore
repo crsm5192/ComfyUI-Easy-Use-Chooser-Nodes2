@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+*.log
+*.zip
+.env
+.env.*
+*.token
+*token.txt
+*apikey*
+*api_key*
+credentials/
+.github-credentials/
+.github-publish/
