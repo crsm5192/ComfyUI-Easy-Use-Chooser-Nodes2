@@ -8,11 +8,12 @@ function enableImageZoom(viewport, images, signal) {
   let x = 0;
   let y = 0;
   let pan = null;
+  let hold = null;
   const badge = document.createElement("span");
   badge.className = "easyuse-chooser-zoom-level";
   badge.setAttribute("aria-hidden", "true");
   viewport.append(badge);
-  viewport.title = "滚轮缩放；按住鼠标中键拖动；双击恢复适应";
+  viewport.title = "滚轮缩放；中键或长按左键拖动；双击恢复适应";
   function render() {
     const { width, height } = viewport.getBoundingClientRect();
     if (width && height) {
@@ -37,14 +38,37 @@ function enableImageZoom(viewport, images, signal) {
     render();
   }, { passive: false, signal });
   viewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 1) return;
-    event.preventDefault();
-    event.stopPropagation();
-    pan = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    viewport.setPointerCapture(event.pointerId);
-    viewport.classList.add("is-panning");
+    delete viewport.dataset.panGesture;
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      pan = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      viewport.setPointerCapture(event.pointerId);
+      viewport.classList.add("is-panning");
+      return;
+    }
+    if (event.button !== 0) return;
+    const state = { id: event.pointerId, ax: event.clientX, ay: event.clientY, x: event.clientX, y: event.clientY };
+    hold = state;
+    state.timer = setTimeout(() => {
+      if (hold !== state) return;
+      hold = null;
+      pan = { id: state.id, x: state.x, y: state.y };
+      viewport.dataset.panGesture = "1";
+      try { viewport.setPointerCapture(state.id); } catch {}
+      viewport.classList.add("is-panning");
+    }, 300);
   }, { signal });
   viewport.addEventListener("pointermove", (event) => {
+    if (hold?.id === event.pointerId) {
+      hold.x = event.clientX;
+      hold.y = event.clientY;
+      if (Math.hypot(hold.x - hold.ax, hold.y - hold.ay) > 6) {
+        clearTimeout(hold.timer);
+        hold = null;
+      }
+      return;
+    }
     if (pan?.id !== event.pointerId) return;
     x += event.clientX - pan.x;
     y += event.clientY - pan.y;
@@ -52,6 +76,13 @@ function enableImageZoom(viewport, images, signal) {
     pan.y = event.clientY;
     render();
   }, { signal });
+  const cancelHold = (event) => {
+    if (hold?.id !== event.pointerId) return;
+    clearTimeout(hold.timer);
+    hold = null;
+  };
+  viewport.addEventListener("pointerup", cancelHold, { signal });
+  viewport.addEventListener("pointercancel", cancelHold, { signal });
   viewport.addEventListener("lostpointercapture", () => {
     pan = null;
     viewport.classList.remove("is-panning");
@@ -105,7 +136,7 @@ function showChooser({ id, urls }) {
   const content = document.createElement("div");
   content.className = "easyuse-chooser-content";
   const hint = document.createElement("p");
-  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键拖动查看细节，双击恢复适应。拖动标题移动窗口，拖动右下角调整窗口大小，或收起后查看画布。";
+  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键或长按左键拖动查看细节，双击恢复适应。拖动标题移动窗口，拖动右下角调整窗口大小，或收起后查看画布。";
   const grid = document.createElement("div");
   grid.className = "easyuse-chooser-images";
   const status = document.createElement("p");
@@ -240,7 +271,7 @@ function showChooser({ id, urls }) {
     label.textContent = `图片 ${index + 1}`;
     tile.append(viewport, label);
     tile.onclick = (event) => {
-      if (state.busy || event.button !== 0) return;
+      if (state.busy || event.button !== 0 || viewport.dataset.panGesture === "1") return;
       if (selected.has(index)) selected.delete(index);
       else selected.add(index);
       tile.setAttribute("aria-pressed", String(selected.has(index)));
@@ -310,7 +341,7 @@ function showChooser({ id, urls }) {
     toolbar.append(enlarge);
     const sliderLabel = document.createElement("label");
     sliderLabel.className = "easyuse-chooser-compare-slider";
-    sliderLabel.append("左键拖动分界线；滚轮同步缩放，中键拖动查看细节，双击恢复适应。对比不会改变已选图片。 ");
+    sliderLabel.append("左键拖动分界线；滚轮同步缩放，中键或长按左键拖动查看细节，双击恢复适应。对比不会改变已选图片。 ");
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
@@ -334,7 +365,7 @@ function showChooser({ id, urls }) {
       event.preventDefault();
     };
     stage.onpointermove = (event) => {
-      if ((event.buttons & 1) && stage.hasPointerCapture(event.pointerId)) point(event);
+      if ((event.buttons & 1) && !stage.classList.contains("is-panning") && stage.hasPointerCapture(event.pointerId)) point(event);
     };
     stage.onkeydown = (event) => {
       const current = Number(slider.value);
