@@ -105,7 +105,7 @@ function showChooser({ id, urls }) {
   const content = document.createElement("div");
   content.className = "easyuse-chooser-content";
   const hint = document.createElement("p");
-  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键拖动查看细节，双击恢复适应。拖动标题移动窗口，或收起后查看画布。";
+  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键拖动查看细节，双击恢复适应。拖动标题移动窗口，拖动右下角调整窗口大小，或收起后查看画布。";
   const grid = document.createElement("div");
   grid.className = "easyuse-chooser-images";
   const status = document.createElement("p");
@@ -140,11 +140,58 @@ function showChooser({ id, urls }) {
     const rect = dialog.getBoundingClientRect();
     moveTo(rect.left, rect.top);
   }
+  const grip = document.createElement("div");
+  grip.className = "easyuse-chooser-resize";
+  grip.title = "拖动调整窗口大小，双击恢复默认";
+  grip.tabIndex = 0;
+  grip.setAttribute("aria-label", "调整窗口大小：方向键微调，Shift 加速，双击恢复默认");
+  function resetManualSize() {
+    dialog.classList.remove("is-manual");
+    dialog.style.width = "";
+    dialog.style.height = "";
+  }
+  function applyManualSize(width, height) {
+    const rect = dialog.getBoundingClientRect();
+    dialog.style.width = `${Math.round(Math.max(340, Math.min(width, window.innerWidth - rect.left - 12)))}px`;
+    dialog.style.height = `${Math.round(Math.max(160, Math.min(height, window.innerHeight - rect.top - 12)))}px`;
+    dialog.classList.add("is-manual");
+    keepOnScreen();
+  }
+  let resize = null;
+  grip.onpointerdown = (event) => {
+    if (event.button !== 0 || content.hidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = dialog.getBoundingClientRect();
+    resize = { id: event.pointerId, width: rect.width, height: rect.height, x: event.clientX, y: event.clientY };
+    grip.setPointerCapture(event.pointerId);
+  };
+  grip.onpointermove = (event) => {
+    if (resize?.id !== event.pointerId) return;
+    applyManualSize(resize.width + event.clientX - resize.x, resize.height + event.clientY - resize.y);
+  };
+  grip.onlostpointercapture = () => { resize = null; };
+  grip.ondblclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resetManualSize();
+    keepOnScreen();
+  };
+  grip.onkeydown = (event) => {
+    const step = event.shiftKey ? 80 : 20;
+    const move = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+    if (!move) return;
+    event.preventDefault();
+    const rect = dialog.getBoundingClientRect();
+    applyManualSize(rect.width + move[0], rect.height + move[1]);
+  };
+  dialog.append(grip);
   function setCollapsed(value) {
     dialog.classList.toggle("is-collapsed", value);
     content.hidden = value;
     collapse.textContent = value ? "展开选图" : "收起看画布";
     collapse.setAttribute("aria-expanded", String(!value));
+    if (value) resetManualSize();
     keepOnScreen();
     if (value) collapse.focus({ preventScroll: true });
   }
@@ -256,6 +303,7 @@ function showChooser({ id, urls }) {
     enlarge.textContent = "放大查看";
     enlarge.onclick = () => {
       const large = dialog.classList.toggle("is-large");
+      resetManualSize();
       enlarge.textContent = large ? "缩小窗口" : "放大查看";
       keepOnScreen();
     };
@@ -310,6 +358,7 @@ function showChooser({ id, urls }) {
       compareButton.setAttribute("aria-expanded", String(!compare.hidden));
       if (compare.hidden) {
         dialog.classList.remove("is-large");
+        resetManualSize();
         enlarge.textContent = "放大查看";
       }
       keepOnScreen();
@@ -375,15 +424,34 @@ app.registerExtension({
       .easyuse-nodes2-chooser { box-sizing: border-box; position: fixed; inset: 80px 20px auto auto;
         z-index: 10000; margin: 0; width: min(620px, calc(100vw - 32px));
         max-height: calc(100vh - 32px); padding: 16px; border: 1px solid #626262; border-radius: 12px;
-        background: #202020; color: #eee; font: 14px system-ui, sans-serif; box-shadow: 0 8px 30px #0008; }
+        background: #202020; color: #eee; font: 14px system-ui, sans-serif; box-shadow: 0 8px 30px #0008;
+        display: flex; flex-direction: column; }
       .easyuse-nodes2-chooser [hidden] { display: none !important; }
+      .easyuse-nodes2-chooser:not([open]) { display: none; }
       .easyuse-nodes2-chooser.is-large { width: min(1100px, calc(100vw - 32px)); }
       .easyuse-nodes2-chooser.is-collapsed { width: min(380px, calc(100vw - 32px)); }
+      .easyuse-nodes2-chooser.is-manual { width: auto; }
+      .easyuse-nodes2-chooser.is-manual .easyuse-chooser-content { display: flex; flex-direction: column; }
+      .easyuse-nodes2-chooser.is-manual .easyuse-chooser-images { flex: 1 1 auto; min-height: 0;
+        max-height: none; grid-auto-rows: minmax(240px, 1fr); }
+      .easyuse-nodes2-chooser.is-manual .easyuse-chooser-image-viewport { flex: 1 1 auto; min-height: 0; height: auto; }
+      .easyuse-nodes2-chooser.is-manual .easyuse-chooser-compare { display: flex; flex-direction: column;
+        flex: 1 1 auto; min-height: 0; }
+      .easyuse-nodes2-chooser.is-manual .easyuse-chooser-compare-stage { flex: 1 1 auto; min-height: 220px; height: auto; }
       .easyuse-chooser-header { display: flex; align-items: center; justify-content: space-between;
         gap: 12px; cursor: move; touch-action: none; user-select: none; }
       .easyuse-nodes2-chooser h2 { margin: 0; font-size: 18px; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap; }
-      .easyuse-chooser-content { max-height: calc(100vh - 110px); overflow-y: auto; }
+      .easyuse-chooser-content { flex: 1 1 auto; min-height: 0; max-height: calc(100vh - 110px);
+        overflow-y: auto; }
+      .easyuse-chooser-resize { position: absolute; right: 0; bottom: 0; width: 22px; height: 22px;
+        cursor: nwse-resize; touch-action: none; border-bottom-right-radius: 12px; }
+      .easyuse-chooser-resize::before { content: ""; position: absolute; inset: 5px 5px 4px 4px;
+        background: repeating-linear-gradient(135deg, transparent 0 4px, #8a8a8a 4px 6px); }
+      .easyuse-chooser-resize:hover::before, .easyuse-chooser-resize:focus-visible::before {
+        background: repeating-linear-gradient(135deg, transparent 0 4px, #cfcfcf 4px 6px); }
+      .easyuse-chooser-resize:focus-visible { outline: 1px solid #52d38a; outline-offset: -1px; }
+      .easyuse-nodes2-chooser.is-collapsed .easyuse-chooser-resize { display: none; }
       .easyuse-nodes2-chooser p { margin: 12px 0; }
       .easyuse-chooser-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 12px; max-height: 55vh; overflow-y: auto; padding: 4px; }
