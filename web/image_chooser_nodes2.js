@@ -3,17 +3,18 @@ import { api } from "../../scripts/api.js";
 
 let active = null;
 
-function enableImageZoom(viewport, images, signal) {
+function enableImageZoom(viewport, images, signal, { immediate = false } = {}) {
   let scale = 1;
   let x = 0;
   let y = 0;
   let pan = null;
-  let hold = null;
+  let press = null;
   const badge = document.createElement("span");
   badge.className = "easyuse-chooser-zoom-level";
   badge.setAttribute("aria-hidden", "true");
   viewport.append(badge);
-  viewport.title = "滚轮缩放；中键或长按左键拖动；双击恢复适应";
+  viewport.title = immediate ? "滚轮缩放；按住左键拖动；双击恢复适应"
+    : "滚轮缩放；中键或长按左键拖动；双击恢复适应";
   function render() {
     const { width, height } = viewport.getBoundingClientRect();
     if (width && height) {
@@ -37,6 +38,12 @@ function enableImageZoom(viewport, images, signal) {
     scale = next;
     render();
   }, { passive: false, signal });
+  function engagePan(state) {
+    pan = { id: state.id, x: state.x, y: state.y };
+    viewport.dataset.panGesture = "1";
+    try { viewport.setPointerCapture(state.id); } catch {}
+    viewport.classList.add("is-panning");
+  }
   viewport.addEventListener("pointerdown", (event) => {
     delete viewport.dataset.panGesture;
     if (event.button === 1) {
@@ -48,24 +55,25 @@ function enableImageZoom(viewport, images, signal) {
       return;
     }
     if (event.button !== 0) return;
-    const state = { id: event.pointerId, ax: event.clientX, ay: event.clientY, x: event.clientX, y: event.clientY };
-    hold = state;
-    state.timer = setTimeout(() => {
-      if (hold !== state) return;
-      hold = null;
-      pan = { id: state.id, x: state.x, y: state.y };
-      viewport.dataset.panGesture = "1";
-      try { viewport.setPointerCapture(state.id); } catch {}
-      viewport.classList.add("is-panning");
-    }, 300);
+    press = { id: event.pointerId, ax: event.clientX, ay: event.clientY, x: event.clientX, y: event.clientY };
+    if (!immediate) {
+      const state = press;
+      state.timer = setTimeout(() => {
+        if (press !== state) return;
+        press = null;
+        engagePan(state);
+      }, 300);
+    }
   }, { signal });
   viewport.addEventListener("pointermove", (event) => {
-    if (hold?.id === event.pointerId) {
-      hold.x = event.clientX;
-      hold.y = event.clientY;
-      if (Math.hypot(hold.x - hold.ax, hold.y - hold.ay) > 6) {
-        clearTimeout(hold.timer);
-        hold = null;
+    if (press?.id === event.pointerId) {
+      press.x = event.clientX;
+      press.y = event.clientY;
+      if (Math.hypot(press.x - press.ax, press.y - press.ay) > 6) {
+        if (press.timer) clearTimeout(press.timer);
+        const state = press;
+        press = null;
+        if (immediate) engagePan(state);
       }
       return;
     }
@@ -76,13 +84,13 @@ function enableImageZoom(viewport, images, signal) {
     pan.y = event.clientY;
     render();
   }, { signal });
-  const cancelHold = (event) => {
-    if (hold?.id !== event.pointerId) return;
-    clearTimeout(hold.timer);
-    hold = null;
+  const cancelPress = (event) => {
+    if (press?.id !== event.pointerId) return;
+    if (press.timer) clearTimeout(press.timer);
+    press = null;
   };
-  viewport.addEventListener("pointerup", cancelHold, { signal });
-  viewport.addEventListener("pointercancel", cancelHold, { signal });
+  viewport.addEventListener("pointerup", cancelPress, { signal });
+  viewport.addEventListener("pointercancel", cancelPress, { signal });
   viewport.addEventListener("lostpointercapture", () => {
     pan = null;
     viewport.classList.remove("is-panning");
@@ -136,7 +144,7 @@ function showChooser({ id, urls }) {
   const content = document.createElement("div");
   content.className = "easyuse-chooser-content";
   const hint = document.createElement("p");
-  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，中键或长按左键拖动查看细节，双击恢复适应。拖动标题移动窗口，拖动右下角调整窗口大小，或收起后查看画布。";
+  hint.textContent = "点击图片选中，可多选。图片上滚轮缩放，按住左键或中键拖动查看细节，双击恢复适应。拖动标题移动窗口，拖动右下角调整窗口大小，或收起后查看画布。";
   const grid = document.createElement("div");
   grid.className = "easyuse-chooser-images";
   const status = document.createElement("p");
@@ -266,7 +274,7 @@ function showChooser({ id, urls }) {
     const viewport = document.createElement("div");
     viewport.className = "easyuse-chooser-image-viewport";
     viewport.append(img);
-    enableImageZoom(viewport, [img], state.listeners.signal);
+    enableImageZoom(viewport, [img], state.listeners.signal, { immediate: true });
     const label = document.createElement("span");
     label.textContent = `图片 ${index + 1}`;
     tile.append(viewport, label);
@@ -493,7 +501,7 @@ app.registerExtension({
       .easyuse-chooser-image { display: flex; flex-direction: column; align-items: center;
         gap: 8px; padding: 10px; border: 3px solid #555; border-radius: 8px; background: #303030; }
       .easyuse-chooser-image-viewport { position: relative; width: 100%; height: 240px;
-        overflow: hidden; background: #111; touch-action: none; }
+        overflow: hidden; background: #111; touch-action: none; cursor: grab; }
       .easyuse-chooser-image img { display: block; width: 100%; height: 100%; object-fit: contain;
         transform-origin: 0 0; pointer-events: none; }
       .easyuse-chooser-zoom-level { position: absolute; right: 6px; bottom: 6px;
